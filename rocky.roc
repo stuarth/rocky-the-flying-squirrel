@@ -14,10 +14,10 @@ import pg.Pg.Result
 
 main : Task {} [Exit I32 Str]_
 main =
-    Task.mapErr (run) \e ->
-        when e is
+    Task.mapErr (run) \err ->
+        when err is
             DatabaseUrlNotFound -> Exit 1 "DATABASE_URL not found"
-            _ -> Exit 1 ":("
+            other -> Exit 1 "Error: $(Inspect.toStr other)"
 
 run : Task {} _
 run =
