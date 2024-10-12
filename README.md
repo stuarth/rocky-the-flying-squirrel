@@ -59,12 +59,15 @@ And place `rocky` in your `$PATH`.
 
 Rocky looks for a folder called `sql` containing queries stored in separate `.sql` files, and creates a `Sql.roc` file containing functions corresponding to individual `.sql` files.
 
+In order to understand queries' types, a database connection is needed. Set the `DATABASE_URL` environmental variable to the database's connection string when running `rocky`.
+
 ## Status
 
 Rocky the Flying Squirrel is early! Notably abscent features coming soon
 
 - [ ] Nullable columns
 - [ ] Nullable columns due to joins
+- [ ] Array types
 - [ ] Bools
 - [ ] DateTime
 
