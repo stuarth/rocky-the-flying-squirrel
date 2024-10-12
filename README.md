@@ -47,7 +47,7 @@ selectEmployeeByName = \p0 ->
 
 ### Installing Rocky
 
-Build the `rocky` executable by cloning the repository and running 
+Build the `rocky` executable by cloning the repository and running
 
 ```sh
 roc build rocky.roc
@@ -68,7 +68,7 @@ Rocky the Flying Squirrel is early! Notably abscent features coming soon
 - [ ] Nullable columns
 - [ ] Nullable columns due to joins
 - [ ] Array types
-- [ ] Bools
+- [x] Bools
 - [ ] DateTime
 
 ## Contribution

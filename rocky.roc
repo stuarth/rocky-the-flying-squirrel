@@ -1,6 +1,6 @@
 app [main] {
     pf: platform "https://github.com/roc-lang/basic-cli/releases/download/0.15.0/SlwdbJ-3GR7uBWQo6zlmYWNYOxnvo8r6YABXD-45UOw.tar.br",
-    pg: "https://github.com/stuarth/roc-pg/releases/download/v0.2.1/r7AmqTH9U7ZhsXTEbOANvJItoOcuY-kCytWBEegNCmw.tar.br",
+    pg: "https://github.com/stuarth/roc-pg/releases/download/v0.3/KSo0D5IZR-Ms1FSsl7jiRex_41CwktAbVGkqIqUt8wE.tar.br",
 }
 
 import pf.Stdout
@@ -105,7 +105,7 @@ resolveDataTypeOid = \client, dataTypeOid ->
 
 pgDataTypeToRoc = \type ->
     when type is
-        # "bool" -> Ok { type: Bool, decoder: "bool", bind: "bool" }
+        "bool" -> Ok { type: Bool, decoder: "bool", bind: "bool" }
         "text" | "char" | "bpchar" | "varchar" -> Ok { type: Str, decoder: "str", bind: "str" }
         "float4" | "float8" | "numeric" -> Ok { type: F64, decoder: "f64", bind: "f64" }
         "int2" | "int4" | "int8" -> Ok { type: I64, decoder: "i64", bind: "i64" }
