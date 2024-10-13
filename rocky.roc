@@ -100,7 +100,15 @@ resolveDataTypeOid = \client, dataTypeOid ->
 
     Pg.Cmd.new typeQuery
     |> Pg.Cmd.bind [Pg.Cmd.u8 dataTypeOid]
-    |> Pg.Cmd.expect1 (Pg.Result.str "type")
+    |> Pg.Cmd.expect1
+        (
+            Pg.Result.succeed
+                (\type -> \isArray ->
+                        { type, isArray }
+                )
+            |> Pg.Result.with (Pg.Result.str "type")
+            |> Pg.Result.with (Pg.Result.bool "is_array")
+        )
     |> Pg.BasicCliClient.command client
 
 pgDataTypeToRoc = \type ->
@@ -127,7 +135,7 @@ compileQuery = \client, { comments, query, path } ->
     paramaterDataTypes = taskAll! inputs \input -> resolveDataTypeOid client input.dataTypeOid
     parameters =
         paramaterDataTypes
-        |> List.keepOks pgDataTypeToRoc
+        |> List.keepOks \dataType -> pgDataTypeToRoc dataType.type
         |> List.mapWithIndex \rocType, idx -> { rocType, name: "p$(Num.toStr idx)" }
 
     inputSignature = parameters |> List.map .name |> Str.joinWith ", " |> \signature -> if signature == "" then "{}" else signature
@@ -146,7 +154,7 @@ compileQuery = \client, { comments, query, path } ->
             |> taskAll! \output ->
                 Task.map (resolveDataTypeOid client output.dataTypeOid) \dataType -> { name: output.name, dataTypeOid: output.dataTypeOid, dataType }
             |> List.map \{ name, dataType } ->
-                rocType = pgDataTypeToRoc dataType |> Result.withDefault { decoder: "X", type: Unknown, bind: "X" }
+                rocType = pgDataTypeToRoc dataType.type |> Result.withDefault { decoder: "X", type: Unknown, bind: "X" }
 
                 { name, camelName: snakeCaseToCamelCase name, dataType, rocType }
 
