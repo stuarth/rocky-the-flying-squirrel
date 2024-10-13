@@ -11,6 +11,7 @@ import pg.Cmd
 import pg.Pg.Cmd
 import pg.Pg.BasicCliClient
 import pg.Pg.Result
+import CodeGen
 
 main : Task {} [Exit I32 Str]_
 main =
@@ -29,11 +30,11 @@ run =
 
     Stdout.line! "Generating queries for $(sqlFilesStr).."
 
-    queries = taskAll! sqlFiles parseSqlQuery
-
     client = Pg.BasicCliClient.connect! (databaseUrl |> parseConnectionString |> Task.fromResult!)
 
-    codeGen! queries "Sql.roc" client
+    queries = taskAll! sqlFiles \f -> parseSqlQuery f client
+
+    codeGen! queries "Sql.roc"
 
     Task.ok {}
 
@@ -56,11 +57,36 @@ parseQueryFileContent = \queryContent ->
 
     { comments, query: (List.dropFirst lines idx) |> Str.joinWith "\n" |> Str.trim }
 
-parseSqlQuery = \path ->
-    Task.map (File.readUtf8 (Path.display path)) \content ->
-        { comments, query } = parseQueryFileContent content
+parseSqlQuery : Path, Pg.BasicCliClient.Client -> Task CodeGen.Query _
+parseSqlQuery = \path, client ->
+    content = File.readUtf8! (Path.display path)
 
-        { comments, query, path }
+    { comments, query } = parseQueryFileContent content
+
+    name = fnName path |> Task.fromResult!
+
+    queryCmd = Pg.BasicCliClient.prepare! query { client, name }
+
+    { kind } = Cmd.params queryCmd
+
+    (parameters, fields) =
+        when kind is
+            PreparedCmd { parameters: ps, fields: fs } -> (ps, fs)
+            _ -> ([], [])
+
+    inputs = taskAll! parameters \parameter ->
+        dataType = resolveDataTypeOid! client parameter.dataTypeOid
+
+        Task.ok { parameter, dataType }
+
+    outputs =
+        fields
+            |> taskAll! \output ->
+                dataType = resolveDataTypeOid! client output.dataTypeOid
+
+                Task.ok { output: { dataTypeOid: Num.toI32 output.dataTypeOid, name: output.name }, dataType }
+
+    Task.ok { comments, query, path, fnName: name, inputs, outputs }
 
 fnName = \path ->
     path |> filename |> Result.map \f -> Str.replaceLast f ".sql" ""
@@ -69,11 +95,6 @@ filename = \path ->
     when Str.split (Path.display path) "/" is
         [.., f] -> Ok f
         _ -> Err MissingFilename
-
-formatComments = \comments ->
-    comments
-    |> List.map \c -> Str.withPrefix c "# "
-    |> Str.joinWith "\n"
 
 resolveDataTypeOid = \client, dataTypeOid ->
     # https://github.com/giacomocavalieri/squirrel/blob/ab36e390c7428c4144e40cc75b9b31edbda85811/src/squirrel/internal/database/postgres.gleam#L46-L76
@@ -113,99 +134,6 @@ resolveDataTypeOid = \client, dataTypeOid ->
         )
     |> Pg.BasicCliClient.command client
 
-pgDataTypeToRoc = \type ->
-    when type is
-        "bool" -> Ok { type: Bool, decoder: "bool", bind: "bool" }
-        "text" | "char" | "bpchar" | "varchar" -> Ok { type: Str, decoder: "str", bind: "str" }
-        "float4" | "float8" | "numeric" -> Ok { type: F64, decoder: "f64", bind: "f64" }
-        "int2" | "int4" | "int8" -> Ok { type: I64, decoder: "i64", bind: "i64" }
-        _ -> Err (UnknownPgType type)
-
-compileQuery : _, { comments : List Str, query : Str, path : Path } -> Task Str _
-compileQuery = \client, { comments, query, path } ->
-    queryFnName = fnName path |> Task.fromResult!
-
-    queryCmd = Pg.BasicCliClient.prepare! query { client, name: queryFnName }
-
-    { kind } = Cmd.params queryCmd
-
-    (inputs, outputs) =
-        when kind is
-            PreparedCmd { parameters, fields } -> (parameters, fields)
-            _ -> ([], [])
-
-    paramaterDataTypes = taskAll! inputs \input -> resolveDataTypeOid client input.dataTypeOid
-    parameters =
-        paramaterDataTypes
-        |> List.keepOks \dataType -> pgDataTypeToRoc dataType.type
-        |> List.mapWithIndex \rocType, idx -> { rocType, name: "p$(Num.toStr idx)" }
-
-    inputSignature = parameters |> List.map .name |> Str.joinWith ", " |> \signature -> if signature == "" then "{}" else signature
-
-    binds =
-        parameters
-        |> List.map \{ rocType, name } -> "Pg.Cmd.$(rocType.bind) $(name)"
-        |> Str.joinWith ", "
-
-    baseIndentation = "        "
-
-    indentedQuery = Str.replaceEach query "\n" "\n$(baseIndentation)"
-
-    outputFields =
-        outputs
-            |> taskAll! \output ->
-                Task.map (resolveDataTypeOid client output.dataTypeOid) \dataType -> { name: output.name, dataTypeOid: output.dataTypeOid, dataType }
-            |> List.map \{ name, dataType } ->
-                rocType = pgDataTypeToRoc dataType.type |> Result.withDefault { decoder: "X", type: Unknown, bind: "X" }
-
-                { name, camelName: snakeCaseToCamelCase name, dataType, rocType }
-
-    inputTypeSignature =
-        parameters
-        |> List.map \{ rocType } -> Inspect.toStr rocType.type
-        |> Str.joinWith ", "
-        |> \signature -> if signature == "" then "{}" else signature
-
-    outputTypeSignature =
-        outputFields
-        |> List.map \{ camelName, rocType } -> "$(camelName): $(Inspect.toStr rocType.type)"
-        |> Str.joinWith ", "
-        |> \s -> "Cmd.Cmd (List { $(s) }) _"
-
-    succeedSignature = outputFields |> List.map (\{ camelName } -> "\\$(camelName) ->") |> Str.joinWith " "
-    resultWiths =
-        outputFields
-        |> List.map \{ name, rocType } -> "|> Pg.Result.with (Pg.Result.$(rocType.decoder) \"$(name)\")"
-        |> Str.joinWith "\n$(baseIndentation)"
-
-    succeedFn =
-        """
-        ($(succeedSignature)
-            { $(outputFields |> List.map .camelName |> Str.joinWith ", ") }
-        )
-        """
-        |> Str.replaceEach "\n" "\n$(baseIndentation)    "
-
-    """
-    $(formatComments comments)
-    $(queryFnName) : $(inputTypeSignature) -> $(outputTypeSignature)
-    $(queryFnName) = \\$(inputSignature) ->
-        query =
-            \"\"\"
-            $(indentedQuery)
-            \"\"\"
-
-        Pg.Cmd.new query
-        |> Pg.Cmd.bind [ $(binds) ]
-        |> Pg.Cmd.expectN (
-            Pg.Result.succeed
-                $(succeedFn)
-            $(resultWiths)
-        )
-    """
-    |> Str.trim
-    |> Task.ok
-
 parseConnectionString : Str -> Result _ _
 # :scream:
 # note that this does not parse all possible connection string formats
@@ -241,28 +169,15 @@ parseConnectionString = \connectionStr ->
         database,
     }
 
-compile : List { comments : List Str, query : Str, path : Path }, Pg.BasicCliClient.Client -> Task Str _
-compile = \queries, client ->
-    exportedFns = queries |> List.map .path |> List.keepOks fnName |> Str.joinWith ", "
-    queryFns = queries |> taskAll! (\query -> compileQuery client query) |> Str.joinWith "\n\n"
+codeGen = \queries, target ->
+    when CodeGen.compile queries is
+        Ok content ->
+            Stdout.line! "Writing to $(target)"
+            File.writeUtf8 target content
 
-    """
-    # File generated by https://github.com/stuarth/rocky-the-flying-squirrel
-
-    module [$(exportedFns)]
-
-    import pg.Cmd
-    import pg.Pg.Cmd
-    import pg.Pg.Result
-
-    $(queryFns)
-    """
-    |> Task.ok
-
-codeGen = \queries, target, client ->
-    Stdout.line! "Writing to $(target)"
-
-    File.writeUtf8 target (compile! queries client)
+        Err e ->
+            Stdout.line! "Error producing queries!"
+            Task.fromResult (Err e)
 
 findDirs : Str, Path -> Task (List Path) _
 findDirs = \query, searchPath ->
@@ -295,21 +210,3 @@ taskAll = \items, task ->
             [item, .. as remaining] ->
                 Task.map (task item) \val ->
                     Step { vals: List.append vals val, rest: remaining }
-
-snakeCaseToCamelCase = \s ->
-    words = Str.split s "_"
-
-    upperLastWords =
-        words
-        |> List.dropFirst 1
-        |> List.map \word ->
-            letters = Str.toUtf8 word
-            firstLetter = List.first letters |> Result.withDefault ' '
-
-            upperFirst = if firstLetter >= 'a' && firstLetter <= 'z' then firstLetter - ('a' - 'A') else firstLetter
-            Str.fromUtf8 (List.prepend (List.dropFirst letters 1) upperFirst) |> Result.withDefault word
-
-    Str.joinWith (List.prependIfOk upperLastWords (List.first words)) ""
-
-expect
-    "helloWorld" == snakeCaseToCamelCase "hello_world"
