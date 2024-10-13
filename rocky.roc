@@ -33,7 +33,9 @@ run =
 
     client = Pg.BasicCliClient.connect! (databaseUrl |> parseConnectionString |> Task.fromResult!)
 
-    codeGen queries "Sql.roc" client
+    codeGen! queries "Sql.roc" client
+
+    Task.ok {}
 
 sqlFilesInDir : Path -> Task (List Path) _
 sqlFilesInDir = \path ->
@@ -258,6 +260,8 @@ compile = \queries, client ->
     |> Task.ok
 
 codeGen = \queries, target, client ->
+    Stdout.line! "Writing to $(target)"
+
     File.writeUtf8 target (compile! queries client)
 
 findDirs : Str, Path -> Task (List Path) _
