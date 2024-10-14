@@ -2,7 +2,6 @@ module [parseSqlFile]
 
 import pf.Path exposing [Path]
 import pf.File
-import Helpers exposing [taskAll]
 
 parseQueryFileContent = \queryContent ->
     lines = Str.split queryContent "\n"
