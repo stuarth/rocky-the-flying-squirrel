@@ -24,15 +24,14 @@ Output : {
 Query : {
     comments : List Str,
     query : Str,
-    fnName : Str,
+    name : Str,
     inputs : List Input,
     outputs : List Output,
-    path : Path,
 }
 
 compile : List Query -> Result Str _
 compile = \queries ->
-    exportedFns = queries |> List.map .fnName |> Str.joinWith ", "
+    exportedFns = queries |> List.map .name |> Str.joinWith ", "
     queryFns = queries |> List.keepOks compileQuery |> Str.joinWith "\n\n"
 
     """
@@ -49,7 +48,7 @@ compile = \queries ->
     |> Ok
 
 compileQuery : Query -> Result Str _
-compileQuery = \{ comments, query, fnName, inputs, outputs } ->
+compileQuery = \{ comments, query, name, inputs, outputs } ->
 
     parameters =
         inputs
@@ -60,7 +59,7 @@ compileQuery = \{ comments, query, fnName, inputs, outputs } ->
 
     binds =
         parameters
-        |> List.map \{ rocType, name } -> "Pg.Cmd.$(rocType.bind) $(name)"
+        |> List.map \{ rocType, name: paramName } -> "Pg.Cmd.$(rocType.bind) $(paramName)"
         |> Str.joinWith ", "
 
     baseIndentation = "        "
@@ -89,7 +88,7 @@ compileQuery = \{ comments, query, fnName, inputs, outputs } ->
     succeedSignature = outputFields |> List.map (\{ camelName } -> "\\$(camelName) ->") |> Str.joinWith " "
     resultWiths =
         outputFields
-        |> List.map \{ name, rocType } -> "|> Pg.Result.with (Pg.Result.$(rocType.decoder) \"$(name)\")"
+        |> List.map \{ name: fieldName, rocType } -> "|> Pg.Result.with (Pg.Result.$(rocType.decoder) \"$(fieldName)\")"
         |> Str.joinWith "\n$(baseIndentation)"
 
     succeedFn =
@@ -102,8 +101,8 @@ compileQuery = \{ comments, query, fnName, inputs, outputs } ->
 
     """
     $(formatComments comments)
-    $(fnName) : $(inputTypeSignature) -> $(outputTypeSignature)
-    $(fnName) = \\$(inputSignature) ->
+    $(name) : $(inputTypeSignature) -> $(outputTypeSignature)
+    $(name) = \\$(inputSignature) ->
         query =
             \"\"\"
             $(indentedQuery)
